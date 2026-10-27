@@ -5,7 +5,7 @@ import QuickActions from './components/QuickActions';
 import ChatWindow from './components/ChatWindow';
 import ChatInput from './components/ChatInput';
 import Footer from './components/Footer';
-import { getHealth, getOllamaStatus, getOllamaModels, streamChatMessage } from './services/api';
+import { getHealth, getOllamaStatus, getOllamaModels, streamChatMessage, appendStreamContent } from './services/api';
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState(null);
@@ -136,7 +136,7 @@ export default function App() {
         signal: controller.signal,
         onChunk: (chunk) => {
           if (chunk.content) {
-            accumulatedContent += chunk.content;
+            accumulatedContent = appendStreamContent(accumulatedContent, chunk.content);
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;

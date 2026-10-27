@@ -45,6 +45,34 @@ export async function getOllamaModels() {
 }
 
 /**
+ * Safely append streaming chunk content to the accumulated message.
+ * Ensures model hallucinations (such as altered `git rm --preview` commands or
+ * rogue model text appended after a complete deterministic safety explanation)
+ * cannot corrupt the visible output.
+ */
+export function appendStreamContent(accumulated, chunkContent) {
+  if (!chunkContent) return accumulated;
+
+  // If the deterministic safety explanation is already complete, do NOT append model text after it
+  if (accumulated.includes('### Explanation of `git rm -- preview`')) {
+    return accumulated;
+  }
+
+  let text = chunkContent;
+
+  // If safety notice is present, sanitize any corrupted tokens
+  if (
+    accumulated.includes('Deterministic Safety Notice') ||
+    text.includes('Deterministic Safety Notice')
+  ) {
+    text = text.replace(/git\s+rm\s+--preview\b/g, 'git rm -- preview');
+    text = text.replace(/\b--preview\b/g, '`preview` (path argument)');
+  }
+
+  return accumulated + text;
+}
+
+/**
  * Send a chat, command explanation, or error diagnosis request to the local AI (atomic).
  */
 export async function sendChatMessage({ message, mode = 'general', history = [], model = null }) {
