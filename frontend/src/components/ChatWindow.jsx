@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Trash2, AlertCircle, Terminal, HelpCircle } from 'lucide-react';
+import { Trash2, AlertCircle, Terminal } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import GhostAvatar from './GhostAvatar';
 
@@ -28,13 +28,13 @@ export default function ChatWindow({
     },
     {
       mode: 'error_exorcist',
-      text: 'Error: fatal: refusing to merge unrelated histories on git pull origin main',
-      label: 'Exorcise git unrelated histories error',
+      text: 'ModuleNotFoundError: No module named \'requests\'',
+      label: 'Exorcise missing Python module error',
     },
     {
       mode: 'safer_fix',
-      text: 'How can I safely kill all node processes using port 3000 on Windows/Linux?',
-      label: 'Safe process termination alternatives',
+      text: 'How can I safely preview and remove untracked build files without deleting uncommitted work?',
+      label: 'Safe dry-run cleanup alternatives',
     },
   ];
 
@@ -59,6 +59,7 @@ export default function ChatWindow({
               type="button"
               className="icon-button"
               onClick={onClearMessages}
+              disabled={isLoading}
               title="Clear terminal session"
               aria-label="Clear conversation history"
             >
@@ -100,7 +101,7 @@ export default function ChatWindow({
             <h2 className="empty-title">The Terminal Ghost is Listening</h2>
             <p className="empty-subtitle">
               Ask about obscure flags, paste terminal exceptions, or request safer command alternatives.
-              Powered 100% locally by open-weight AI.
+              Powered 100% locally by open-weight AI with live real-time token streaming.
             </p>
 
             <div className="empty-instructions">
@@ -121,19 +122,19 @@ export default function ChatWindow({
             </div>
           </div>
         ) : (
-          messages.map((msg, index) => (
-            <ChatMessage key={index} message={msg} />
-          ))
-        )}
-
-        {/* Loading Indicator */}
-        {isLoading && (
-          <div className="message-row assistant">
-            <div className="ghost-thinking">
-              <GhostAvatar size={20} glowing={true} className="pulse-ghost" />
-              <span>Ghost is analyzing terminal memory...</span>
-            </div>
-          </div>
+          messages.map((msg, index) => {
+            if (msg.isStreaming && !msg.content) {
+              return (
+                <div key={index} className="message-row assistant">
+                  <div className="ghost-thinking">
+                    <GhostAvatar size={20} glowing={true} className="pulse-ghost" />
+                    <span>Ghost is analyzing terminal memory...</span>
+                  </div>
+                </div>
+              );
+            }
+            return <ChatMessage key={index} message={msg} />;
+          })
         )}
       </div>
     </div>

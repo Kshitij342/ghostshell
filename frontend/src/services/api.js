@@ -45,7 +45,7 @@ export async function getOllamaModels() {
 }
 
 /**
- * Send a chat, command explanation, or error diagnosis request to the local AI.
+ * Send a chat, command explanation, or error diagnosis request to the local AI (atomic).
  */
 export async function sendChatMessage({ message, mode = 'general', history = [], model = null }) {
   const payload = {
@@ -79,4 +79,84 @@ export async function sendChatMessage({ message, mode = 'general', history = [],
   }
 
   return data;
+}
+
+/**
+ * Send a chat request with real-time token streaming via Server-Sent Events (SSE).
+ */
+export async function streamChatMessage({
+  message,
+  mode = 'general',
+  history = [],
+  model = null,
+  onChunk,
+  signal,
+}) {
+  const payload = {
+    message,
+    mode,
+    history: history.slice(-10),
+    ...(model ? { model } : {}),
+  };
+
+  const response = await fetch(`${API_BASE}/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (!response.ok) {
+    let errorDetail = `Request failed with HTTP ${response.status}`;
+    try {
+      const errJson = await response.json();
+      errorDetail = errJson.detail?.message || errorDetail;
+    } catch (_) {}
+    throw new Error(errorDetail);
+  }
+
+  if (!response.body) {
+    throw new Error('ReadableStream not supported by browser environment.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep trailing incomplete line in buffer
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('data: ')) {
+          const jsonStr = trimmed.slice(6);
+          try {
+            const data = JSON.parse(jsonStr);
+            if (data.error) {
+              const err = new Error(data.message || data.error);
+              err.resolution = data.resolution;
+              err.type = data.error;
+              throw err;
+            }
+            if (onChunk) {
+              onChunk(data);
+            }
+          } catch (e) {
+            if (e.resolution) throw e;
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }

@@ -4,18 +4,17 @@ import GhostAvatar from './GhostAvatar';
 
 /**
  * Format markdown text safely into React elements without dangerous HTML injection.
+ * Gracefully handles incomplete markdown during live token streaming.
  */
-function FormattedContent({ text }) {
+function FormattedContent({ text, isStreaming }) {
   if (!text) return null;
 
-  // Split by code blocks: ```lang\ncode\n```
   const parts = [];
   const codeBlockRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
   let lastIndex = 0;
   let match;
 
   while ((match = codeBlockRegex.exec(text)) !== null) {
-    // Text before code block
     if (match.index > lastIndex) {
       parts.push({
         type: 'text',
@@ -32,26 +31,53 @@ function FormattedContent({ text }) {
     lastIndex = match.index + match[0].length;
   }
 
+  // Handle trailing text or incomplete/open code block during streaming
   if (lastIndex < text.length) {
-    parts.push({
-      type: 'text',
-      content: text.substring(lastIndex),
-    });
+    const remaining = text.substring(lastIndex);
+    const openBlockMatch = remaining.match(/^```([a-zA-Z0-9_-]*)\n([\s\S]*)$/);
+
+    if (openBlockMatch) {
+      parts.push({
+        type: 'code',
+        language: openBlockMatch[1] || 'bash',
+        content: openBlockMatch[2],
+        isOpen: true,
+      });
+    } else {
+      parts.push({
+        type: 'text',
+        content: remaining,
+      });
+    }
   }
 
   return (
     <div className="markdown-body">
       {parts.map((part, idx) => {
+        const isLastPart = idx === parts.length - 1;
         if (part.type === 'code') {
-          return <CodeBlock key={idx} language={part.language} code={part.content} />;
+          return (
+            <CodeBlock
+              key={idx}
+              language={part.language}
+              code={part.content}
+              showCursor={isStreaming && isLastPart}
+            />
+          );
         }
-        return <TextParagraphs key={idx} text={part.content} />;
+        return (
+          <TextParagraphs
+            key={idx}
+            text={part.content}
+            showCursor={isStreaming && isLastPart}
+          />
+        );
       })}
     </div>
   );
 }
 
-function CodeBlock({ language, code }) {
+function CodeBlock({ language, code, showCursor }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -77,13 +103,16 @@ function CodeBlock({ language, code }) {
         </button>
       </div>
       <pre>
-        <code>{code}</code>
+        <code>
+          {code}
+          {showCursor && <span className="streaming-cursor" aria-hidden="true" />}
+        </code>
       </pre>
     </div>
   );
 }
 
-function TextParagraphs({ text }) {
+function TextParagraphs({ text, showCursor }) {
   const lines = text.split('\n');
   const elements = [];
   let currentList = [];
@@ -104,6 +133,7 @@ function TextParagraphs({ text }) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
+    const isLastLine = i === lines.length - 1;
 
     if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
       currentList.push(trimmed.substring(2));
@@ -112,18 +142,42 @@ function TextParagraphs({ text }) {
 
     flushList();
 
-    if (!trimmed) {
+    if (!trimmed && !isLastLine) {
       continue;
     }
 
+    const cursorElement = showCursor && isLastLine ? (
+      <span className="streaming-cursor" aria-hidden="true" />
+    ) : null;
+
     if (trimmed.startsWith('### ')) {
-      elements.push(<h4 key={`h4-${i}`}>{renderInline(trimmed.substring(4))}</h4>);
+      elements.push(
+        <h4 key={`h4-${i}`}>
+          {renderInline(trimmed.substring(4))}
+          {cursorElement}
+        </h4>
+      );
     } else if (trimmed.startsWith('## ')) {
-      elements.push(<h3 key={`h3-${i}`}>{renderInline(trimmed.substring(3))}</h3>);
+      elements.push(
+        <h3 key={`h3-${i}`}>
+          {renderInline(trimmed.substring(3))}
+          {cursorElement}
+        </h3>
+      );
     } else if (trimmed.startsWith('# ')) {
-      elements.push(<h2 key={`h2-${i}`}>{renderInline(trimmed.substring(2))}</h2>);
+      elements.push(
+        <h2 key={`h2-${i}`}>
+          {renderInline(trimmed.substring(2))}
+          {cursorElement}
+        </h2>
+      );
     } else {
-      elements.push(<p key={`p-${i}`}>{renderInline(line)}</p>);
+      elements.push(
+        <p key={`p-${i}`}>
+          {renderInline(line)}
+          {cursorElement}
+        </p>
+      );
     }
   }
 
@@ -132,7 +186,6 @@ function TextParagraphs({ text }) {
 }
 
 function renderInline(text) {
-  // Parse inline `code` and **bold**
   const tokens = [];
   const regex = /(`[^`]+`|\*\*[^*]+\*\*)/g;
   let lastIdx = 0;
@@ -210,6 +263,11 @@ export default function ChatMessage({ message }) {
                     [{message.model}]
                   </span>
                 )}
+                {message.isStreaming && (
+                  <span style={{ color: '#00ff9d', fontSize: '0.68rem', fontStyle: 'italic' }}>
+                    streaming...
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -235,7 +293,7 @@ export default function ChatMessage({ message }) {
         {isUser ? (
           <div style={{ whiteSpace: 'pre-wrap' }}>{message.content}</div>
         ) : (
-          <FormattedContent text={message.content} />
+          <FormattedContent text={message.content} isStreaming={message.isStreaming} />
         )}
       </div>
     </div>

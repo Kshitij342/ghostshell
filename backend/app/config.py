@@ -13,8 +13,11 @@ class Settings:
         self.ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
         self.ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
         self.ollama_timeout_seconds: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60.0"))
+        self.ollama_num_ctx: int = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
+        self.ollama_num_predict: int = int(os.getenv("OLLAMA_NUM_PREDICT", "1536"))
 
         raw_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+
         self.cors_origins: List[str] = [
             origin.strip() for origin in raw_origins.split(",") if origin.strip()
         ]

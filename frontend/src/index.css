@@ -846,3 +846,44 @@ code:not(pre code) {
 .footer-privacy-tag {
   color: var(--accent-spectral);
 }
+
+/* Streaming Typewriter Cursor & Stop Controls */
+.streaming-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background-color: var(--accent-spectral);
+  margin-left: 3px;
+  vertical-align: -1px;
+  box-shadow: 0 0 8px var(--accent-spectral);
+  animation: cursor-blink 0.8s infinite ease-in-out;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.stop-button {
+  background: rgba(244, 63, 94, 0.15);
+  color: var(--accent-rose);
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  border-radius: 8px;
+  padding: 0.7rem 1.1rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  transition: var(--transition-fast);
+  flex-shrink: 0;
+  height: 44px;
+}
+
+.stop-button:hover {
+  background: rgba(244, 63, 94, 0.25);
+  border-color: var(--accent-rose);
+  box-shadow: 0 0 10px rgba(244, 63, 94, 0.3);
+}
+

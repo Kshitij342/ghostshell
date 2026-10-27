@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Header from './components/Header';
 import StatusBar from './components/StatusBar';
 import QuickActions from './components/QuickActions';
 import ChatWindow from './components/ChatWindow';
 import ChatInput from './components/ChatInput';
 import Footer from './components/Footer';
-import { getHealth, getOllamaStatus, getOllamaModels, sendChatMessage } from './services/api';
+import { getHealth, getOllamaStatus, getOllamaModels, streamChatMessage } from './services/api';
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState(null);
@@ -19,6 +19,8 @@ export default function App() {
   const [activeMode, setActiveMode] = useState('general');
   const [placeholder, setPlaceholder] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  const abortControllerRef = useRef(null);
 
   // Check backend health & Ollama connection
   const checkStatus = useCallback(async () => {
@@ -48,7 +50,6 @@ export default function App() {
         const modelsData = await getOllamaModels();
         if (modelsData.models && modelsData.models.length > 0) {
           setModels(modelsData.models);
-          // If selectedModel is not in list, select first available
           const hasSelected = modelsData.models.some((m) => m.name === selectedModel);
           if (!hasSelected) {
             setSelectedModel(modelsData.models[0].name);
@@ -83,10 +84,20 @@ export default function App() {
   };
 
   const handleClearMessages = () => {
-    setMessages([]);
+    if (!isLoading) {
+      setMessages([]);
+    }
   };
 
-  // Send message to backend
+  // Stop generation cleanly
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  };
+
+  // Send message to backend with real-time progressive streaming
   const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
@@ -97,46 +108,126 @@ export default function App() {
       mode: activeMode,
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    const initialAssistantMsg = {
+      role: 'assistant',
+      content: '',
+      mode: activeMode,
+      model: selectedModel,
+      isStreaming: true,
+    };
+
+    const historyPayload = messages.map((m) => ({ role: m.role, content: m.content }));
+
+    setMessages((prev) => [...prev, userMsg, initialAssistantMsg]);
     setInput('');
     setIsLoading(true);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    let accumulatedContent = '';
+
     try {
-      const response = await sendChatMessage({
+      await streamChatMessage({
         message: trimmed,
         mode: activeMode,
-        history: messages.map((m) => ({ role: m.role, content: m.content })),
+        history: historyPayload,
         model: selectedModel,
+        signal: controller.signal,
+        onChunk: (chunk) => {
+          if (chunk.content) {
+            accumulatedContent += chunk.content;
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+                updated[lastIdx] = {
+                  ...updated[lastIdx],
+                  content: accumulatedContent,
+                  tokens_generated: chunk.tokens_generated || updated[lastIdx].tokens_generated,
+                  model: chunk.model || updated[lastIdx].model,
+                };
+              }
+              return updated;
+            });
+          }
+
+          if (chunk.done) {
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+                updated[lastIdx] = {
+                  ...updated[lastIdx],
+                  isStreaming: false,
+                  tokens_generated: chunk.tokens_generated || updated[lastIdx].tokens_generated,
+                };
+              }
+              return updated;
+            });
+          }
+        },
       });
 
-      const assistantMsg = {
-        role: 'assistant',
-        content: response.content,
-        mode: response.mode || activeMode,
-        model: response.model,
-        tokens_generated: response.tokens_generated,
-        created_at: response.created_at,
-      };
+      // Ensure final state marks streaming complete
+      setMessages((prev) => {
+        const updated = [...prev];
+        const lastIdx = updated.length - 1;
+        if (lastIdx >= 0 && updated[lastIdx].role === 'assistant' && updated[lastIdx].isStreaming) {
+          updated[lastIdx] = { ...updated[lastIdx], isStreaming: false };
+        }
+        return updated;
+      });
 
-      setMessages((prev) => [...prev, assistantMsg]);
     } catch (err) {
-      const errorContent = `### ⚠️ Spectral Disturbance (${err.type || 'Error'})
+      if (err.name === 'AbortError') {
+        // User clicked Stop
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              content: accumulatedContent
+                ? `${accumulatedContent}\n\n*(Generation stopped by user)*`
+                : '*(Generation stopped by user)*',
+              isStreaming: false,
+            };
+          }
+          return updated;
+        });
+      } else {
+        const errorContent = `### ⚠️ Spectral Disturbance (${err.type || 'Error'})
 ${err.message}
 
 ${err.resolution ? `**Resolution Steps:**\n${err.resolution}` : ''}
 `;
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: errorContent,
-          mode: activeMode,
-          isError: true,
-        },
-      ]);
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              content: errorContent,
+              isStreaming: false,
+              isError: true,
+            };
+          } else {
+            updated.push({
+              role: 'assistant',
+              content: errorContent,
+              mode: activeMode,
+              isStreaming: false,
+              isError: true,
+            });
+          }
+          return updated;
+        });
+      }
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -172,6 +263,7 @@ ${err.resolution ? `**Resolution Steps:**\n${err.resolution}` : ''}
           input={input}
           setInput={setInput}
           onSend={handleSend}
+          onStop={handleStop}
           isLoading={isLoading}
           activeMode={activeMode}
           onResetMode={handleResetMode}

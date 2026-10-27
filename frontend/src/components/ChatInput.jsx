@@ -1,10 +1,11 @@
 import React, { useRef, useEffect } from 'react';
-import { Send, X, CornerDownLeft, Sparkles, Terminal, ShieldAlert } from 'lucide-react';
+import { Send, X, CornerDownLeft, Sparkles, Terminal, ShieldAlert, Square } from 'lucide-react';
 
 export default function ChatInput({
   input,
   setInput,
   onSend,
+  onStop,
   isLoading,
   activeMode,
   onResetMode,
@@ -57,6 +58,7 @@ export default function ChatInput({
             type="button"
             className="mode-dismiss-btn"
             onClick={onResetMode}
+            disabled={isLoading}
             title="Reset to general terminal mode"
           >
             <X size={12} />
@@ -69,7 +71,9 @@ export default function ChatInput({
         className="input-form"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!isLoading && input.trim()) {
+          if (isLoading && onStop) {
+            onStop();
+          } else if (!isLoading && input.trim()) {
             onSend();
           }
         }}
@@ -83,25 +87,40 @@ export default function ChatInput({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            !isOllamaConnected
+            isLoading
+              ? 'Ghost is generating response... Click Stop to cancel.'
+              : !isOllamaConnected
               ? 'Ollama is offline. Start it with "ollama serve" to chat with your ghost...'
               : placeholder || 'Ask the ghost a command question, or choose a quick action above...'
           }
           rows={1}
-          disabled={isLoading}
+          disabled={isLoading || !isOllamaConnected}
           aria-label="Terminal input prompt"
         />
 
-        <button
-          type="submit"
-          className="send-button"
-          disabled={isLoading || !input.trim() || !isOllamaConnected}
-          title={!isOllamaConnected ? 'Ollama is offline' : 'Send message (Enter)'}
-          aria-label="Send message"
-        >
-          <Send size={15} />
-          <span>Send</span>
-        </button>
+        {isLoading ? (
+          <button
+            type="button"
+            className="stop-button"
+            onClick={onStop}
+            title="Stop generation (Cancel stream)"
+            aria-label="Stop generating response"
+          >
+            <Square size={13} fill="#f43f5e" />
+            <span>Stop</span>
+          </button>
+        ) : (
+          <button
+            type="submit"
+            className="send-button"
+            disabled={isLoading || !input.trim() || !isOllamaConnected}
+            title={!isOllamaConnected ? 'Ollama is offline' : 'Send message (Enter)'}
+            aria-label="Send message"
+          >
+            <Send size={15} />
+            <span>Send</span>
+          </button>
+        )}
       </form>
 
       <div className="input-hint-row">

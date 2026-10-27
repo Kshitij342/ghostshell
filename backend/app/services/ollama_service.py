@@ -1,8 +1,9 @@
 """Ollama asynchronous HTTP client and integration service."""
 
+import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 
 from app.config import settings
@@ -127,18 +128,18 @@ class OllamaService:
                 error=f"Malformed or unexpected response from Ollama: {str(exc)}",
             )
 
-    async def generate_chat(
+    def _build_payload(
         self,
         message: str,
         mode: ChatMode = "general",
         history: Optional[List[ChatMessageInput]] = None,
         model: Optional[str] = None,
-    ) -> ChatResponse:
-        """Send chat messages to Ollama and return formatted response."""
+        stream: bool = False,
+    ) -> tuple[str, Dict[str, Any]]:
+        """Construct the Ollama chat payload with guardrail prompts."""
         target_model = model or self.default_model
         system_prompt = get_system_prompt(mode)
 
-        # Assemble messages payload with strict system guardrails
         ollama_messages: List[Dict[str, str]] = [
             {"role": "system", "content": system_prompt}
         ]
@@ -152,11 +153,26 @@ class OllamaService:
         payload = {
             "model": target_model,
             "messages": ollama_messages,
-            "stream": False,
+            "stream": stream,
             "options": {
-                "temperature": 0.4 if mode != "general" else 0.7,
+                "temperature": 0.2 if mode != "general" else 0.7,
+                "num_ctx": settings.ollama_num_ctx,
+                "num_predict": settings.ollama_num_predict,
+                "top_p": 0.9,
             },
         }
+
+        return target_model, payload
+
+    async def generate_chat(
+        self,
+        message: str,
+        mode: ChatMode = "general",
+        history: Optional[List[ChatMessageInput]] = None,
+        model: Optional[str] = None,
+    ) -> ChatResponse:
+        """Send chat messages to Ollama and return formatted response (atomic)."""
+        target_model, payload = self._build_payload(message, mode, history, model, stream=False)
 
         try:
             async with self._client() as client:
@@ -194,6 +210,61 @@ class OllamaService:
         except httpx.TimeoutException:
             raise OllamaTimeoutError(
                 f"Ollama request timed out after {self.timeout}s while generating response with model '{target_model}'."
+            )
+
+    async def stream_chat(
+        self,
+        message: str,
+        mode: ChatMode = "general",
+        history: Optional[List[ChatMessageInput]] = None,
+        model: Optional[str] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream chat tokens progressively from Ollama."""
+        target_model, payload = self._build_payload(message, mode, history, model, stream=True)
+
+        try:
+            async with self._client() as client:
+                async with client.stream("POST", "/api/chat", json=payload) as response:
+                    if response.status_code == 404:
+                        raise OllamaModelNotFoundError(
+                            f"Model '{target_model}' was not found in your local Ollama library. "
+                            f"Download it using: 'ollama pull {target_model}'"
+                        )
+                    if response.status_code != 200:
+                        err_text = (await response.aread()).decode("utf-8", errors="ignore")
+                        raise OllamaUpstreamError(
+                            f"Ollama returned HTTP {response.status_code}: {err_text}"
+                        )
+
+                    async for line in response.aiter_lines():
+                        trimmed = line.strip()
+                        if not trimmed:
+                            continue
+                        try:
+                            data = json.loads(trimmed)
+                        except json.JSONDecodeError:
+                            continue
+
+                        msg = data.get("message", {})
+                        content = msg.get("content", "")
+                        is_done = data.get("done", False)
+
+                        yield {
+                            "content": content,
+                            "done": is_done,
+                            "model": target_model,
+                            "mode": mode,
+                            "created_at": data.get("created_at"),
+                            "tokens_evaluated": data.get("prompt_eval_count"),
+                            "tokens_generated": data.get("eval_count"),
+                        }
+        except httpx.ConnectError:
+            raise OllamaConnectionError(
+                f"Cannot connect to Ollama at {self.base_url}. Ensure Ollama is running ('ollama serve')."
+            )
+        except httpx.TimeoutException:
+            raise OllamaTimeoutError(
+                f"Ollama stream request timed out after {self.timeout}s with model '{target_model}'."
             )
 
 

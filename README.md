@@ -236,7 +236,8 @@ Open your browser at **`http://localhost:5173`**.
 | `GET` | `/api/health` | Backend health check and application metadata |
 | `GET` | `/api/ollama/status` | Connectivity check to local Ollama daemon & version |
 | `GET` | `/api/ollama/models` | List locally downloaded models in Ollama |
-| `POST` | `/api/chat` | Send terminal prompts, commands, or errors to local AI |
+| `POST` | `/api/chat` | Send terminal prompts, commands, or errors to local AI (atomic JSON response) |
+| `POST` | `/api/chat/stream` | Real-time token streaming via Server-Sent Events (SSE) with progressive typewriter output |
 
 ### Example Chat Request:
 ```json
