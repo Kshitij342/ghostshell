@@ -1,0 +1,1 @@
+"""GhostShell API Routes."""
